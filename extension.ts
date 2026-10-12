@@ -1,24 +1,60 @@
-import { Extension } from "@codemirror/state";
+import { foldedRanges } from "@codemirror/language";
+import {
+  EditorState,
+  Extension,
+  StateEffect,
+  StateField,
+} from "@codemirror/state";
 import {
   EditorView,
+  GutterMarker,
+  ViewPlugin,
   ViewUpdate,
   gutter,
-  lineNumbers,
-  GutterMarker,
+  gutters,
 } from "@codemirror/view";
-import { Compartment, EditorState } from "@codemirror/state";
-import { foldedRanges } from "@codemirror/language";
 
-let relativeLineNumberGutter = new Compartment();
+const flushers = new Set<() => void>();
 
-class Marker extends GutterMarker {
-  /** The text to render in gutter */
-  text: string;
+/** Repaint debounced gutters immediately (used when the delay is set to 0). */
+export function flushRelativeLineNumbers() {
+  for (const flush of Array.from(flushers)) flush();
+}
 
-  constructor(text: string) {
+function delayOf(getDebounce: () => number): number {
+  const value = Number(getDebounce());
+  return Number.isFinite(value) && value > 0 ? value : 0;
+}
+
+function hiddenBetween(state: EditorState, lineNo: number, cursorLine: number): number {
+  if (lineNo === cursorLine) return 0;
+  const fromLine = Math.min(lineNo, cursorLine);
+  const toLine = Math.max(lineNo, cursorLine);
+  const start = state.doc.line(fromLine).from;
+  const stop = state.doc.line(toLine).from;
+  let hidden = 0;
+  foldedRanges(state).between(start, stop, (from, to) => {
+    hidden += state.doc.lineAt(to).number - state.doc.lineAt(from).number;
+  });
+  return hidden;
+}
+
+function labelFor(state: EditorState, lineNo: number, cursorLine: number): string {
+  const width = String(state.doc.lines).length;
+  if (lineNo === cursorLine) return String(lineNo).padStart(width, " ");
+  const distance = Math.max(0, Math.abs(cursorLine - lineNo) - hiddenBetween(state, lineNo, cursorLine));
+  return String(distance).padStart(width, " ");
+}
+
+class RelativeMarker extends GutterMarker {
+  elementClass = "relative-line-numbers-mono";
+
+  constructor(readonly text: string) {
     super();
-    this.text = text;
-    this.elementClass = "relative-line-numbers-mono";
+  }
+
+  eq(other: GutterMarker) {
+    return other instanceof RelativeMarker && other.text === this.text;
   }
 
   toDOM() {
@@ -26,92 +62,124 @@ class Marker extends GutterMarker {
   }
 }
 
-function linesCharLength(state: EditorState): number {
-  /**
-   * Get the character length of the number of lines in the document
-   * Example: 100 lines -> 3 characters
-   */
-  return state.doc.lines.toString().length;
-}
+/**
+ * Vim-style hybrid numbers: absolute on the cursor line, relative elsewhere.
+ * `getDebounce` is read live so the settings slider applies without reinstalling.
+ *
+ * Line markers are NOT rebuilt by CodeMirror when only the selection changes.
+ * A cursor-line state field is what makes `lineMarkerChange` true. With delay 0
+ * that field updates inside the original selection transaction (no extra
+ * dispatch — those fight Vim mode). With a delay, a view plugin commits the
+ * line after the user pauses.
+ */
+export function lineNumbersRelative(getDebounce: () => number = () => 0): Extension {
+  const setCursorLine = StateEffect.define<number>();
 
-const absoluteLineNumberGutter = gutter({
-  lineMarker: (view, line) => {
-    const lineNo = view.state.doc.lineAt(line.from).number;
-    const charLength = linesCharLength(view.state);
-    const absoluteLineNo = new Marker(
-      lineNo.toString().padStart(charLength, " "),
-    );
-    const cursorLine = view.state.doc.lineAt(
-      view.state.selection.asSingle().ranges[0].to,
-    ).number;
-
-    if (lineNo === cursorLine) {
-      return absoluteLineNo;
-    }
-
-    return null;
-  },
-  initialSpacer: (view: EditorView) => {
-    const spacer = new Marker("0".repeat(linesCharLength(view.state)));
-    return spacer;
-  },
-});
-
-function relativeLineNumbers(lineNo: number, state: EditorState) {
-  const charLength = linesCharLength(state);
-  const blank = " ".padStart(charLength, " ");
-  if (lineNo > state.doc.lines) {
-    return blank;
-  }
-  const cursorLine = state.doc.lineAt(
-    state.selection.asSingle().ranges[0].to,
-  ).number;
-
-  const start = Math.min(
-    state.doc.line(lineNo).from,
-    state.selection.asSingle().ranges[0].to,
-  );
-
-  const stop = Math.max(
-    state.doc.line(lineNo).from,
-    state.selection.asSingle().ranges[0].to,
-  );
-
-  const folds = foldedRanges(state);
-  let foldedCount = 0;
-  folds.between(start, stop, (from, to) => {
-    let rangeStart = state.doc.lineAt(from).number;
-    let rangeStop = state.doc.lineAt(to).number;
-    foldedCount += rangeStop - rangeStart;
+  const cursorLineField = StateField.define<number>({
+    create(state) {
+      return state.doc.lineAt(state.selection.main.head).number;
+    },
+    update(value, tr) {
+      for (const effect of tr.effects) {
+        if (effect.is(setCursorLine)) return effect.value;
+      }
+      if (delayOf(getDebounce) === 0 && (tr.selection || tr.docChanged)) {
+        return tr.state.doc.lineAt(tr.state.selection.main.head).number;
+      }
+      if (tr.docChanged) {
+        const safe = Math.min(Math.max(1, value), tr.startState.doc.lines);
+        const mapped = tr.changes.mapPos(tr.startState.doc.line(safe).from, 1);
+        return tr.state.doc.lineAt(mapped).number;
+      }
+      return value;
+    },
   });
 
-  if (lineNo === cursorLine) {
-    return blank;
-  } else {
-    return (Math.abs(cursorLine - lineNo) - foldedCount)
-      .toString()
-      .padStart(charLength, " ");
-  }
-}
-// This shows the numbers in the gutter
-const showLineNumbers = relativeLineNumberGutter.of(
-  lineNumbers({ formatNumber: relativeLineNumbers }),
-);
+  const relativeGutter = gutter({
+    class: "cm-relativeLineNumbers",
+    lineMarker(view, line) {
+      const lineNo = view.state.doc.lineAt(line.from).number;
+      const cursorLine = view.state.field(cursorLineField);
+      return new RelativeMarker(labelFor(view.state, lineNo, cursorLine));
+    },
+    lineMarkerChange(update) {
+      return (
+        update.docChanged ||
+        update.startState.field(cursorLineField) !== update.state.field(cursorLineField) ||
+        foldedRanges(update.startState) !== foldedRanges(update.state)
+      );
+    },
+    initialSpacer(view) {
+      return new RelativeMarker("0".repeat(String(view.state.doc.lines).length));
+    },
+    updateSpacer(spacer, update) {
+      const text = "0".repeat(String(update.view.state.doc.lines).length);
+      return spacer instanceof RelativeMarker && spacer.text === text
+        ? spacer
+        : new RelativeMarker(text);
+    },
+  });
 
-// This ensures the numbers update
-// when selection (cursorActivity) happens
-const lineNumbersUpdateListener = EditorView.updateListener.of(
-  (viewUpdate: ViewUpdate) => {
-    if (viewUpdate.selectionSet) {
-      viewUpdate.view.dispatch({
-        effects: relativeLineNumberGutter.reconfigure(
-          lineNumbers({ formatNumber: relativeLineNumbers }),
-        ),
-      });
-    }
-  },
-);
+  const debounceCursor = ViewPlugin.fromClass(
+    class {
+      private timer: ReturnType<typeof setTimeout> | null = null;
+      private dead = false;
+      readonly flush: () => void;
 
-export function lineNumbersRelative(): Extension {
-  return [absoluteLineNumberGutter, showLineNumbers, lineNumbersUpdateListener];
+      constructor(readonly view: EditorView) {
+        this.flush = () => {
+          if (this.dead) return;
+          this.clear();
+          const line = view.state.doc.lineAt(view.state.selection.main.head).number;
+          if (view.state.field(cursorLineField) !== line) {
+            view.dispatch({ effects: setCursorLine.of(line) });
+          }
+        };
+        flushers.add(this.flush);
+      }
+
+      update(update: ViewUpdate) {
+        if (this.dead) return;
+        const delay = delayOf(getDebounce);
+        if (delay === 0) {
+          this.clear();
+          return;
+        }
+        if (!update.selectionSet && !update.docChanged) return;
+        const line = update.state.doc.lineAt(update.state.selection.main.head).number;
+        if (update.state.field(cursorLineField) === line) {
+          this.clear();
+          return;
+        }
+        this.clear();
+        this.timer = setTimeout(() => {
+          this.timer = null;
+          this.flush();
+        }, delay);
+      }
+
+      clear() {
+        if (this.timer != null) {
+          clearTimeout(this.timer);
+          this.timer = null;
+        }
+      }
+
+      destroy() {
+        this.dead = true;
+        this.clear();
+        flushers.delete(this.flush);
+      }
+    },
+  );
+
+  return [
+    cursorLineField,
+    gutters(),
+    relativeGutter,
+    debounceCursor,
+    // Hides Obsidian's own absolute gutter while this extension is active.
+    // Removed with the extension when relative numbers are toggled off.
+    EditorView.editorAttributes.of({ class: "relative-line-numbers-active" }),
+  ];
 }

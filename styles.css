@@ -1,10 +1,22 @@
 .relative-line-numbers-mono {
-  font-family: monospace;
+  font-family: var(--font-monospace), monospace;
   white-space: pre;
 }
 
-.cm-lineNumbers {
-  font-family: monospace;
+.cm-relativeLineNumbers {
+  font-family: var(--font-monospace), monospace;
+  font-variant-numeric: tabular-nums;
   white-space: pre;
-  min-width: 25px; /* prevent relative line numbers from shifting on files with ~10-20 lines */
+  min-width: 2.5em;
+  color: var(--line-number-color, var(--text-faint));
+}
+
+.cm-relativeLineNumbers .cm-gutterElement {
+  padding: 0 8px 0 5px;
+}
+
+/* Obsidian's own absolute gutter stays mounted (the setting is on) but must
+   not sit beside the relative one. The class is removed when the extension is. */
+.relative-line-numbers-active .cm-gutters > .cm-lineNumbers {
+  display: none;
 }

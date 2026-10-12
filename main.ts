@@ -41,6 +41,7 @@ export default class RelativeLineNumbers extends Plugin {
       id: "toggle-relative-line-numbers",
       name: "Toggle Relative Line Numbers",
       callback: () => {
+        // @ts-ignore
         if (!this.app.vault.getConfig("showLineNumber")) {
           return;
         }
@@ -134,8 +135,8 @@ export default class RelativeLineNumbers extends Plugin {
   setupConfigChangeListener() {
     // @ts-ignore
     const configChangedEvent = this.app.vault.on("config-changed", () => {
-      // @ts-ignore
       const showLineNumber: boolean =
+        // @ts-ignore
         this.app.vault.getConfig("showLineNumber");
 
       if (showLineNumber && !this.enabled) {
@@ -206,20 +207,20 @@ export default class RelativeLineNumbers extends Plugin {
   }
 
   private clearAllDebounceTimers() {
-    for (const timer of this.debounceTimers.values()) {
+    Array.from(this.debounceTimers.values()).forEach((timer) => {
       clearTimeout(timer);
-    }
+    });
 
     this.debounceTimers.clear();
   }
 
   private flushDebounceTimers() {
-    for (const cm of this.debounceTimers.keys()) {
+    Array.from(this.debounceTimers.keys()).forEach((cm) => {
       this.clearDebounceTimer(cm);
 
       if (this.enabled) {
         this.updateLegacyLineNumbers(cm, cm.getCursor().line + 1);
       }
-    }
+    });
   }
 }

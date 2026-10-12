@@ -24,15 +24,12 @@ export default class RelativeLineNumbers extends Plugin {
   async onload() {
     await this.loadSettings();
 
-    this.addSettingTab(
-      new RelativeLineNumbersSettingTab(this.app, this)
-    );
+    this.addSettingTab(new RelativeLineNumbersSettingTab(this.app, this));
 
     this.registerEditorExtension(this.editorExtension);
 
     // @ts-ignore
-    const showLineNumber: boolean =
-      this.app.vault.getConfig("showLineNumber");
+    const showLineNumber: boolean = this.app.vault.getConfig("showLineNumber");
 
     if (showLineNumber) {
       this.enable();
@@ -69,9 +66,7 @@ export default class RelativeLineNumbers extends Plugin {
     };
   }
 
-  async updateSettings(
-    updates: Partial<RelativeLineNumbersSettings>
-  ) {
+  async updateSettings(updates: Partial<RelativeLineNumbersSettings>) {
     this.settings = {
       ...this.settings,
       ...updates,
@@ -131,27 +126,24 @@ export default class RelativeLineNumbers extends Plugin {
       cm.setOption(
         "lineNumberFormatter",
         // @ts-ignore
-        CodeMirror.defaults["lineNumberFormatter"]
+        CodeMirror.defaults["lineNumberFormatter"],
       );
     });
   }
 
   setupConfigChangeListener() {
     // @ts-ignore
-    const configChangedEvent = this.app.vault.on(
-      "config-changed",
-      () => {
-        // @ts-ignore
-        const showLineNumber: boolean =
-          this.app.vault.getConfig("showLineNumber");
+    const configChangedEvent = this.app.vault.on("config-changed", () => {
+      // @ts-ignore
+      const showLineNumber: boolean =
+        this.app.vault.getConfig("showLineNumber");
 
-        if (showLineNumber && !this.enabled) {
-          this.enable();
-        } else if (!showLineNumber && this.enabled) {
-          this.disable();
-        }
+      if (showLineNumber && !this.enabled) {
+        this.enable();
+      } else if (!showLineNumber && this.enabled) {
+        this.disable();
       }
-    );
+    });
 
     // @ts-ignore
     configChangedEvent.ctx = this;
@@ -188,10 +180,7 @@ export default class RelativeLineNumbers extends Plugin {
     this.debounceTimers.set(cm, timer);
   };
 
-  private updateLegacyLineNumbers(
-    cm: CodeMirror.Editor,
-    current: number
-  ) {
+  private updateLegacyLineNumbers(cm: CodeMirror.Editor, current: number) {
     if (cm.state.curLineNum === current) {
       return;
     }

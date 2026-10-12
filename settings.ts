@@ -24,7 +24,7 @@ export class RelativeLineNumbersSettingTab extends PluginSettingTab {
     new Setting(containerEl)
       .setName("Debounce delay")
       .setDesc(
-        "Delay in milliseconds before updating relative line numbers. Set to 0 to disable debouncing."
+        "Delay in milliseconds before updating relative line numbers. Set to 0 to disable debouncing.",
       )
       .addSlider((slider) =>
         slider
@@ -35,7 +35,7 @@ export class RelativeLineNumbersSettingTab extends PluginSettingTab {
             await this.plugin.updateSettings({
               debounce: value,
             });
-          })
+          }),
       );
   }
 }

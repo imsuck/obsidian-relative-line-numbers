@@ -100,16 +100,14 @@ export default class RelativeLineNumbers extends Plugin {
     this.app.workspace.updateOptions();
   }
 
-  /**
-   * Keep the listener for the life of the plugin. The handler no-ops while
-   * disabled. Calling `registerCodeMirror` on every enable stacked a new
-   * listener each toggle, and `cm.off` did not remove the workspace hook.
-   */
   legacyEnable() {
     if (!this.legacyHooked) {
       this.legacyHooked = true;
       this.registerCodeMirror((cm: CodeMirror.Editor) => {
         cm.on("cursorActivity", this.legacyRelativeLineNumbers);
+        const onMode = () => this.legacyRelativeLineNumbers(cm);
+        (cm as any).state.relativeModeHook = onMode;
+        (cm as any).on?.("vim-mode-change", onMode);
       });
     }
     this.app.workspace.iterateCodeMirrors((cm: CodeMirror.Editor) => {
@@ -121,6 +119,7 @@ export default class RelativeLineNumbers extends Plugin {
     this.app.workspace.iterateCodeMirrors((cm: CodeMirror.Editor) => {
       cm.state.relativeActive = false;
       cm.state.relativeLine = undefined;
+      cm.state.relativeAbsolute = undefined;
       cm.setOption(
         "lineNumberFormatter",
         // @ts-ignore CM5 global
@@ -134,6 +133,8 @@ export default class RelativeLineNumbers extends Plugin {
     if (!this.legacyHooked) return;
     this.app.workspace.iterateCodeMirrors((cm: CodeMirror.Editor) => {
       cm.off("cursorActivity", this.legacyRelativeLineNumbers);
+      const onMode = (cm as any).state?.relativeModeHook;
+      if (onMode) (cm as any).off?.("vim-mode-change", onMode);
     });
   }
 
@@ -169,15 +170,30 @@ export default class RelativeLineNumbers extends Plugin {
     this.debounceTimers.set(cm, timer);
   };
 
+  private legacyIsAbsolute(cm: CodeMirror.Editor): boolean {
+    const vim = (cm as any).state?.vim;
+    if (vim) return Boolean(vim.insertMode);
+    const keyMap = (cm as any).getOption?.("keyMap");
+    return keyMap === "vim-insert" || keyMap === "vim-replace";
+  }
+
   private updateLegacyLineNumbers(cm: CodeMirror.Editor, current: number) {
+    const absolute = this.legacyIsAbsolute(cm);
     // Same line AND our formatter still installed. After disable/enable,
     // `relativeLine` can still match while the formatter was restored to absolute.
-    if (cm.state.relativeLine === current && cm.state.relativeActive) return;
+    if (
+      cm.state.relativeLine === current &&
+      cm.state.relativeAbsolute === absolute &&
+      cm.state.relativeActive
+    ) {
+      return;
+    }
 
     cm.state.relativeLine = current;
+    cm.state.relativeAbsolute = absolute;
     cm.state.relativeActive = true;
     cm.setOption("lineNumberFormatter", (line: number) => {
-      if (line === current) return String(current);
+      if (absolute || line === current) return String(line);
       return String(Math.abs(current - line));
     });
     // CM5 does not redraw when `lineNumberFormatter` changes. Inside
